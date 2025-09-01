@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.spec
+
+# Vosk модели (храним рядом, но вне git)
+model/vosk-model-*/
+
+# ffmpeg и большие бинарники
+imageio_ffmpeg/
+ffmpeg/
+*.dll
+*.exe
+*.pak
+
+# IDE
+.idea/
+.vscode/
