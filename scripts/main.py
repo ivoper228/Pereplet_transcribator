@@ -113,137 +113,105 @@ class TranscribTextMenu(QDialog):
                 else:
                     line_edit.setText(file_name)
 
-    def continue_transcription_process(self, file_path):   # Вызывает диалоговое окно о запуске транскрибации выбранного файла
-        msg_box = QMessageBox()
+    def continue_transcription_process(self, file_path):
+        print(f"[UI] confirm dialog for: {file_path}")
+        msg_box = QMessageBox(self)
         msg_box.setIcon(QMessageBox.Question)
-        msg_box.setText("Начать процесс транскрибации?")
         msg_box.setWindowTitle("Вопрос")
-
-        continue_button = QPushButton("Продолжить")
-        cancel_button = QPushButton("Отмена")
-
-        msg_box.addButton(continue_button, QMessageBox.AcceptRole)
-        msg_box.addButton(cancel_button, QMessageBox.RejectRole)
-
-        result = msg_box.exec()
-
-        if result == 0:
-            # Если выбрана кнопка "Продолжить"
-            new_path_wav_format = continue_process_transcription(file_path)
-            return new_path_wav_format
-        else:
-            return None
+        msg_box.setText("Начать процесс транскрибации?")
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        if msg_box.exec() == QMessageBox.Yes:
+            print("[UI] clicked:", msg_box.clickedButton().text() if msg_box.clickedButton() else "None")
+            from model.format_to_audio import continue_process_transcription
+            return continue_process_transcription(file_path)
+        return None
 
     def open_file_dialog_with_btn(self, line_edit):       # Обработчик нажатия на кнопку "Выбрать" при выборе файла
-        file_path = ""
-        if self.ui.lineEdit_way_open_file.text() == "    Выберите файл" and not self.ui.textEdit_field_to_text.toPlainText():
-            # Если оба поля пустые, открываем диалоговое окно для выбора файла
-            file_name, _ = QFileDialog.getOpenFileName(self, "Выберите файл", "", "All Files (*)")
-            if not self.is_valid_audio_or_video_file(file_name):
-                self.show_invalid_file_warning()
+
+        # --- 1) выбор файла ---
+        AUDIO_FILTER = "Audio files (*.wav *.mp3 *.flac *.aac *.m4a *.ogg *.wma *.alac);;All files (*.*)"
+        file_path, _ = QFileDialog.getOpenFileName(self, "Выберите аудио", "", AUDIO_FILTER)
+        if not file_path:
+            return
+
+        # быстрая валидация расширения (если в проекте есть готовый валидатор — можешь заменить)
+        valid_exts = {".wav", ".mp3", ".flac", ".aac", ".m4a", ".ogg", ".wma", ".alac"}
+        import os
+        if os.path.splitext(file_path)[1].lower() not in valid_exts:
+            QMessageBox.warning(self, "Неподдерживаемый формат",
+                                "Выберите аудио-файл: WAV/MP3/FLAC/AAC/M4A/OGG/WMA/ALAC.")
+            return
+
+        # покажем путь в поле выбора (если такое поле есть в UI)
+        try:
+            self.ui.lineEdit_way_open_file.setText(file_path)
+        except Exception:
+            pass
+
+        print(f"[UI] Старт транскрибации файла: {file_path}")
+
+        # --- 2) прогресс и «занят» ---
+        progress = QProgressDialog("Идет процесс распознавания...", "Отмена", 0, 100, self)
+        progress.setWindowTitle("Распознавание")
+        progress.setWindowModality(Qt.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        progress.show()
+
+        # опционально заблокируем основные кнопки/курсор
+        try:
+            self.setCursor(Qt.BusyCursor)
+        except Exception:
+            pass
+
+        try:
+            # --- 3) конвертация в WAV ---
+            # если в твоём классе есть метод-обёртка (с подтверждением) — используем его:
+            if hasattr(self, "continue_transcription_process"):
+                wav_path = self.continue_transcription_process(file_path)
             else:
-                line_edit.setText(file_name)
+                # иначе — импортируем прямую функцию из конвертера
+                from model.format_to_audio import continue_process_transcription
+                wav_path = continue_process_transcription(file_path)
 
-        elif self.ui.textEdit_field_to_text.toPlainText():  # Если поле для транскрибации не пустое, выводим сообщение об ошибке
-            msg_box = QMessageBox()
-            msg_box.setIcon(QMessageBox.Warning)
-            msg_box.setText("Поле для транскрибации не пустое. Если хотите сохранить, нажмите Отмена и сохраните.")
-            msg_box.setWindowTitle("Предупреждение")
-
-            continue_button = QPushButton("Продолжить")
-            cancel_button = QPushButton("Отмена")
-
-            msg_box.addButton(continue_button, QMessageBox.AcceptRole)
-            msg_box.addButton(cancel_button, QMessageBox.RejectRole)
-
-            result = msg_box.exec()
-
-            # Если выбрана кнопка "Продолжить"
-            if result == 0:
-                # Если поле для пути к файлу пустое
-                if self.ui.lineEdit_way_open_file.text() == "    Выберите файл":
-                    file_name, _ = QFileDialog.getOpenFileName(self, "Выберите файл", "", "All Files (*)")
-                    if file_name:
-                        if not self.is_valid_audio_or_video_file(file_name):  # Если формат файла неверный
-                            self.show_invalid_file_warning()
-                        else:
-                            line_edit.setText(file_name)
-                            self.ui.textEdit_field_to_text.clear()
-
-                # Если поле для пути к файлу НЕ пустое
-                else:
-                    self.ui.textEdit_field_to_text.clear()
-                    file_path = self.ui.lineEdit_way_open_file.text()
-
-                    # Вызывает окно с loadbar для отображения процесса распознавания
-                    progress_dialog = QProgressDialog("Идет процесс распознавания...", "Отмена", 0, 100, self)
-                    progress_dialog.setWindowTitle("Идет процесс распознавания...")
-                    progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
-                    progress_dialog.setMinimumDuration(0)
-                    progress_dialog.setValue(0)
-
-                    # Установка шрифта и стиля текста для окна с loadbar
-                    font = QFont("Arial", 12)
-                    progress_dialog.setFont(font)
-                    progress_dialog.setStyleSheet("background-color: white; color: black;") # Установка стиля фона и текста
-                    progress_dialog.show()
-
-                    output_audio_filepath = self.continue_transcription_process(file_path)
-
-                    if output_audio_filepath is None:
-                        progress_dialog.close()  # Закрываем диалоговое окно по завершении
-
-                    else:
-                        progress_dialog.setValue(50)
-                        transcribed_text_temp_path = start_model(output_audio_filepath)
-
-                        # Устанавливаем прочитанный текст в поле для текста
-                        with open(transcribed_text_temp_path, "r") as file:
-                            text_to_text_field = file.read()
-
-                        self.textEdit_field_to_text.setPlainText(text_to_text_field)
-
-                        progress_dialog.setValue(100)
-                        progress_dialog.close()  # Закрываем диалоговое окно с loadbar
-
-            # Если выбрана кнопка "Отмена", выходим из функции
-            elif result == 1:
+            if not wav_path:
+                print("[UI] Конвертация отменена/неуспешна.")
+                progress.close()
                 return
 
-        else:
-            # Если поле для выбора файла не пустое, вызываем сообщение о начале процесса транскрибации
-            file_path = self.ui.lineEdit_way_open_file.text()
+            print(f"[FORMAT] WAV готов: {wav_path}")
+            progress.setValue(50)
 
-            # Вызывает окно с loadbar для отображения процесса распознавания
-            progress_dialog = QProgressDialog("Идет процесс распознавания...", "Отмена", 0, 100, self)
-            progress_dialog.setWindowTitle("Идет процесс распознавания...")
-            progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
-            progress_dialog.setMinimumDuration(0)  # Показать диалог немедленно
-            progress_dialog.setValue(0)  # Начальное значение
+            # --- 4) распознавание Vosk ---
+            from model.wav_to_text import start_model
+            print("[VOSK] Запускаю распознавание…")
+            txt_path = start_model(wav_path)  # функция должна вернуть путь к временному .txt с результатом
 
-            # Установка шрифта и стиля текста для окна с loadbar
-            font = QFont("Arial", 12)
-            progress_dialog.setFont(font)
-            progress_dialog.setStyleSheet("background-color: white; color: black;")   # Установка стиля фона и текста
-            progress_dialog.show()
+            # --- 5) чтение результата и вывод в текстовое поле ---
+            text = ""
+            try:
+                with open(txt_path, "r", encoding="utf-8") as f:
+                    text = f.read()
+            except Exception as e:
+                print(f"[VOSK] Не удалось прочитать результат: {e}")
 
-            output_audio_filepath = self.continue_transcription_process(file_path)
+            if hasattr(self.ui, "textEdit_field_to_text"):
+                self.ui.textEdit_field_to_text.setPlainText(text)
+            print(f"[VOSK] Готово. Результат: {txt_path}")
 
-            if output_audio_filepath is None:
-                progress_dialog.close()       # Закрываем диалоговое окно по завершении
-            else:
-                progress_dialog.setValue(50)
+            progress.setValue(100)
 
-                transcribed_text_temp_path = start_model(output_audio_filepath)
-
-                # Устанавливаем прочитанный текст в поле для текста
-                with open(transcribed_text_temp_path, "r") as file:
-                    text_to_text_field = file.read()
-                self.textEdit_field_to_text.setPlainText(text_to_text_field)
-
-                progress_dialog.setValue(100)
-                progress_dialog.close()  # Закрываем диалоговое окно с loadbar
-
+        except Exception as e:
+            # покажем ошибку пользователю и в консоли
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Ошибка", str(e))
+        finally:
+            progress.close()
+            try:
+                self.setCursor(Qt.ArrowCursor)
+            except Exception:
+                pass
     def save_file_dialog(self, line_edit):                     # Вызываем окно сохранения файла
         if not self.ui.textEdit_field_to_text.toPlainText():
             msg = QMessageBox()

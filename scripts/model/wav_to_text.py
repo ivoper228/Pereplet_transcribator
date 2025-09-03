@@ -1,7 +1,25 @@
 # ---------------------------------------------- БИБЛИОТЕКИ ------------------------------------------------------------
 from vosk import Model, KaldiRecognizer
 import wave, json, time, nltk, os
+DEFAULT_LANG = "russian"
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+
+def _ensure_punkt():
+    # пункт может отсутствовать на «чистых» ПК
+    try:
+        nltk.data.find("tokenizers/punkt")
+    except LookupError:
+        nltk.download("punkt", quiet=True)
+    # в новых версиях NLTK таблицы вынесены отдельно
+    try:
+        nltk.data.find("tokenizers/punkt_tab")
+    except LookupError:
+        try:
+            nltk.download("punkt_tab", quiet=True)
+        except Exception:
+            pass
 
 def transcribe_audio(file_path):                                              # транскрибация аудио файда
     model_path = "../model/vosk-model-small-ru-0.22"  # малая модель
@@ -40,38 +58,80 @@ def transcribe_audio(file_path):                                              # 
 
     return transcribed_text
 
-def add_punctuation_and_capitalize(text):                           # добавление заглавных букв и знаков препинания
-    sentences = nltk.sent_tokenize(text)  # Токенизация текста
-    corrected_sentences = []
+def add_punctuation_and_capitalize(text: str, lang: str = DEFAULT_LANG) -> str:
+    text = (text or "").strip()
+    if not text:
+        return ""
 
-    for sentence in sentences:
-        words = nltk.word_tokenize(sentence)  # Разделяем предложение на слова
-        corrected_sentence = ""
-        for i, word in enumerate(words):
-            if i == 0:  # Если это первое слово в предложении
-                corrected_sentence += word.capitalize()  # Начинаем с заглавной буквы
-            else:
-                corrected_sentence += word.lower()  # Остальные слова в нижнем регистре
+    _ensure_punkt()
+    # ВАЖНО: явно задаём язык
+    try:
+        sentences = nltk.sent_tokenize(text, language=lang)
+    except Exception:
+        # если что-то пойдёт не так — просто вернём сырой текст, без крэша
+        return text
 
-            if i < len(words) - 1:
-                corrected_sentence += " "  # Добавляем пробел между словами
-            else:
-                corrected_sentence += "."  # Добавляем точку в конце предложения
-
-        corrected_sentences.append(corrected_sentence)
-
-    return ' '.join(corrected_sentences)
-
-
-def start_model(audio_file_path):         # запуск модели
-    transcribed_text_temp_path = os.path.abspath("../test_formats/TXT/transcribed_text_temp.txt")
-
-    text = transcribe_audio(audio_file_path)
-    text_with_punctuation = add_punctuation_and_capitalize(text)
-
-    with open(transcribed_text_temp_path, "w") as text_file:
-        text_file.write(text_with_punctuation)
-        print("Текст успешно сохранен в файл 'transcribed_text_temp.txt'.")
+    out = []
+    for s in sentences:
+        s = s.strip()
+        if not s:
+            continue
+        s = (s[0].upper() + s[1:]) if len(s) > 1 else s.upper()
+        if s[-1] not in ".!?…":
+            s += "."
+        out.append(s)
+    return " ".join(out)
 
 
-    return transcribed_text_temp_path           # Возвращение пути к временному файлу с транскрибацией
+
+def start_model(audio_file_path: str) -> str:
+    import wave, json, os
+    from pathlib import Path
+    import time
+
+    t0 = time.perf_counter()
+
+    # --- путь для временного TXT (абсолютный) ---
+    # .../scripts/model -> parent -> scripts -> parent -> корень проекта
+    project_root = Path(__file__).resolve().parents[2]
+    txt_dir = project_root / "test_formats" / "TXT"
+    txt_dir.mkdir(parents=True, exist_ok=True)  # ВАЖНО: создаём папку
+    transcribed_text_temp_path = txt_dir / "transcribed_text_temp.txt"
+
+    # --- модель и SR из окружения (как ты уже прокидываешь) ---
+    mdir = os.environ.get("VOSK_MODEL_DIR")
+    sr = int(os.environ.get("VOSK_SR", "16000"))
+    model = Model(mdir)
+    rec = KaldiRecognizer(model, sr)
+
+    # --- распознавание ---
+    wf = wave.open(audio_file_path, "rb")
+    assert wf.getnchannels()==1 and wf.getframerate()==sr and wf.getsampwidth()==2, \
+        f"Нужен WAV mono/PCM16 @ {sr} Гц"
+
+    pieces = []
+    while True:
+        data = wf.readframes(4000)
+        if not data:
+            break
+        if rec.AcceptWaveform(data):
+            print("Процесс распознавания...")
+            pieces.append(json.loads(rec.Result()).get("text", ""))
+    final = json.loads(rec.FinalResult()).get("text", "")
+
+    text = (" ".join([*pieces, final])).strip()
+
+    # --- пост-обработка пунктуации (без падений, если нет punkt) ---
+    try:
+        text = add_punctuation_and_capitalize(text)
+    except Exception:
+        pass
+
+    # --- запись результата ---
+    with open(transcribed_text_temp_path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+    dt = time.perf_counter() - t0
+    print(f"\n Время выполнения транскрибации: {int(dt//60)} минут, {int(dt%60)} секунд.\n")
+
+    return str(transcribed_text_temp_path)
