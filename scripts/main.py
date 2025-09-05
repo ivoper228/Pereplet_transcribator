@@ -1,6 +1,8 @@
 # ---------------------------------------------- БИБЛИОТЕКИ ------------------------------------------------------------
 import numpy as np
 import json, pyaudio, sys, os
+from pathlib import Path
+
 
 from PySide6 import QtGui
 from PySide6.QtGui import QIcon, QFont
@@ -22,6 +24,9 @@ from model.wav_to_text import start_model
     # Загрузка модели
 model_path = "../model/vosk-model-small-ru-0.22"   # малая модель
 model = Model(model_path)
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_DIR = (BASE_DIR / ".." / "model" / "vosk-model-small-ru-0.22").resolve()
+print("[DEBUG] MODEL_DIR:", MODEL_DIR)
 
 # --------------------------------------------- ТРАНСКРИБАЦИЯ ----------------------------------------------------------
 class TranscribTextMenu(QDialog):
